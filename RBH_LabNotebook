@@ -1,0 +1,160 @@
+1. Using your output from part 2.6, write a python script to filter your blastp results and only retain the best hit(s) for each protein query based on e-value (there may be multiple best hits with exactly the same e-value).
+NOTE: Hits from blastp may not be ordered from best to worst! You may want to run
+sort on the output from part 2.6 BEFORE reading it into python. Sort by qseqid and then evalue, but be sure that your sort has the “best” e-values for each query at the top.
+
+Column 1 in the BLAST output for ZFish_against_Human_BLAST is ZFishID
+Column 11 in the BLAST output for ZFish_against_Human_BLAST is HumanID
+
+sort -k sorts by column. The -g option is "general numeric." -n "numeric" doesn't work becase the e-values are in scientific notation. When you want to sort by two things you have to use the "1,1 ... 11,11" notation.
+
+Unix command to sort the files by query ID, and then sort within each query ID by e-value from lowest to highest:
+cat ZFish_against_Human_BLAST | sort -k1,1 -k11,11g > ZFish_against_Human_sorted
+cat Human_against_ZFish_BLAST | sort -k1,1 -k11,11g > Human_against_ZFish_sorted
+
+2. Using these best hits, in some python data structure, retain all human-zebrafish protein
+pairs that share a 1-to-1 reciprocal best hit
+a. 1-to-1 means that that if proteinA in human has two best hits with the same e-
+value to zebrafish protein1 and protein2, these hits should be thrown out and no
+RBH called.
+* if there are two hits with the same E-value throw it out
+
+First I read in the Human_against_ZFish_sorted and Fish_against_Human_sorted files. I read each line (which corresponded to a single ZFishID with this format:
+
+ENSDARP00000000004	ENSP00000417654	56.50	423	176	6	22	440	6	424	1e-162	469
+
+Each line became a list with this format: [ENSDARP00000000004, ENSP00000417654, 1e-162]
+
+Stored inside a larger array: [[ENSDARP00000000004, ENSP00000417654, 1e-162], [ENSDARP00000000004, ENSP00000359172, 1e-20],...]
+
+****** BLOCK 1 : READ FILES *******
+
+n = 0
+with open(zfile, "r") as zfh: # open the zebrafish_against_human file
+    File_array = [] # create an empty array (GLOBAL variable) that will store all the records [[ZFishID, ProteinID, and E-value], ...]
+    for line in zfh: # read is implicit
+        record_array = [] # creates an array that will hold local variable 
+        n += 1
+        line_array = line.split() # split the lines on empty space (tabs)
+        ZPro_ID = line_array[0] # grabs the ZProID and stores it as a local variable
+        HPro_ID = line_array[1] # grabs the HProID and stores it as a local variable
+        E_val = line_array[10] # grabs the E-value and stores it as a local variable
+        record_array.append(ZPro_ID) # appends the ZProID to the local array 
+        record_array.append(HPro_ID) # appends the HProID to the local array
+        record_array.append(E_val) # appends the E value to the local array
+        File_array.append(record_array) # appends the local array to the global array so it can be used outside the for loop
+
+This data structure was stored as a global variable so I could reference it in the next block of code which built a dictionary. 
+
+****** BLOCK 2 : BUILD DICTIONARIES *******
+
+The dictionary holds the best hit for each ZFish ID, but only if it's a unique match {ZFish_ID: HPro_ID, ZFish_ID: HPro_ID, ZFish_ID: HPro_ID, ZFish_ID: HPro_ID, ...}
+
+There are three cases that the code has to be able to handle:
+# Case 1: multiple instances of same ZProID, only one best hit -> write to dict
+# Case 2: multiple instanes of same ZProID, more than one with same eval -> don't write to dict
+# Case 3: only one instance of ZProID -> write to dict
+
+I made two test files, ZFish_temp and Human_temp to test my code on faster.
+
+ZFish_dict = {} # creates a dictionary that will store {ZFish: Best_Hro_Match}
+Candidate_best_ZPro_ID = File_array[0][0] # sets the ZProID in the first item in the File_array as the candidate best hit ZPro_ID
+Candidate_best_HPro_ID = File_array[0][1] # sets the HProID in the first item in the File_array as the candidate best hit HPro_ID
+Candidate_best_eval = File_array[0][2] # set the E-value in the first item in the File_array as the candidadate best e-value
+Candidate_best_is_good = True # assume that the item can be kept and stored until proven otherwise
+entry = 1 # start the for loop at the second item in the array. The first item is already stored in Candidate.
+# Logic for finding unique best hits: 
+    # Loop through the array and look for transitions to a new ZProID. When you find a new one:
+        # Look back to see if the first (Candidate) ZProID had a lower eval. If yes, write it to the dict.
+        # If there were multiple entries with same eval, don't write it to the dict.
+          
+while entry < len(File_array): # for every entry in the File_array
+    Current_ZPro_ID = File_array[entry][0] # set the ZProID of the entry you're on as the Current_ZPro_ID
+    Current_HPro_ID = File_array[entry][1] # set the HProID of the entry you're on as the Current_HPro_ID
+    Current_eval = File_array[entry][2] # set the E-value of the entry you're on as the Current_eval
+    # this block deals with instances where there are multiple hits, but only one best hit
+    if Current_ZPro_ID == Candidate_best_ZPro_ID: # if the ZProID of the entry you're on is the same as the first one (candidate)
+        if (Current_eval == Candidate_best_eval): # and the e-value is the same (Case 2 (duplicate ZproID/ evals)) move onto entry + 1
+            Candidate_best_is_good = False # switch Candidate best to False.
+
+    else: # Case 1 or Case 3, no duplicate (ZproID/ evals)
+        if Candidate_best_is_good == True: # if on the next entry you see that the e-value is changed, set Candidate_best_is_good back to true and store the Candidate_best_ZproID.
+            ZFish_dict[Candidate_best_ZPro_ID] = Candidate_best_HPro_ID
+    # now take this item and make it the new Candidate
+        Candidate_best_ZPro_ID = Current_ZPro_ID # Make the current record the candidate best
+        Candidate_best_HPro_ID = Current_HPro_ID 
+        Candidate_best_eval  = Current_eval
+        Candidate_best_is_good = True
+
+    entry += 1     
+
+    # special case: last line of the file
+    if (entry == len(File_array)): 
+        if Candidate_best_is_good == True:
+            ZFish_dict[Candidate_best_ZPro_ID] = Candidate_best_HPro_ID
+
+I repeated BLOCK 1 and BLOCK 2 for the Human file. 
+
+****** BLOCK 3: SEARCH FOR RECIPROCAL BEST HITS ******
+
+This blocks of code takes the ZFish and Human dictionaries and compares them for best hits. If the ZFish_dict key is the same as the Human_dict value AND the ZFish_dict value is the same as the Human_dict key, then store the pair [ZProID, HProID] in a local list (ZFish_Human_pair). Then append that list to a global list (RBH).
+
+RBH = [] # create an empty array which will hold the reciprocal best hits
+# if the value of the Human dictionary matches the key of the ZFish dictionary 
+for Zkey in ZFish_dict: 
+    for Hkey in Human_dict:
+        if Zkey == Human_dict[Hkey] and Hkey == ZFish_dict[Zkey]:
+            ZFish_Human_pair = []
+            ZFish_Human_pair.append(Zkey)
+            ZFish_Human_pair.append(Hkey)
+            RBH.append(ZFish_Human_pair)
+
+****** BLOCK 4: Add Gene ID and Gene Name from Biomart files ******
+
+3. To a file named Human_Zebrafish_RBH.tsv, output a tab-separated-value table of all
+RBH relationships with six columns:
+[Human Gene ID, Human Protein ID, Human Gene Name, Zebrafish Gene ID, Zebrafish Protein ID, Zebrafish Gene Name]
+
+Human Gene ID: in the Human_against_ZFish_sorted file, column 1
+Human Gene Name: in the BioMart output from part 1.2    
+Gene stable ID: column 1
+Gene name: column 3
+
+ZFish_biomart = open("ensembl_zebrafish.txt", "r")		# open the ensembl chart file
+ZFish_all_lines = ZFish_biomart.read()		            # read it into a single line
+chart_record_array = ZFish_all_lines.split('\n')	    # split that line on the \n characters to make a list, each record is an item in that array
+ln_count = 0		
+ZFish_biomart_list = []					                      # set a counter to 0
+for line in chart_record_array:
+    ln_count += 1			                                # for each record increment the counter by 1
+    chart_rec_line_array = line.split('\t')           # split the line on the empty space . Chart_rec_line_array = [GSID, PSID, gene name]
+    ZFish_biomart_list.append(chart_rec_line_array)   # append Chart_rec_line_array to the global list ZFish_biomart_list
+	# split the record on tab so each record is now a list with GSID, PSID, gene name
+
+ZFish_biomart_list looks like this = [[GSID, PSID, gene name], [GSID, PSID, gene name], [GSID, PSID, gene name], [GSID, PSID, gene name],...]
+
+All_items_record = [] 
+for record in RBH:
+    current_record = []
+    for Hitem in Human_biomart_list:
+        if len(Hitem) == 3:
+            if record[1] == Hitem[1]: # if the Human Protein ID in the RBH matches the Human protein ID in the biomart outpue
+                current_record.append(record[1]) # append the Human Protein ID
+                current_record.append(Hitem[0])    # append the Human Gene Stable ID
+                current_record.append(Hitem[2])  # append the Human Gene Name             
+                # All_items_record.append(current_record)
+    for Zitem in ZFish_biomart_list:
+        if len(Zitem) == 3:
+            if record[0] == Zitem[1]: # if the ZFish Protein ID in the RBH array matches the ZFish Protein ID in the biomart array
+                current_record.append(record[0]) # append the ZFish Protein ID
+                current_record.append(Zitem[0])    # append the ZFish Gene Stable ID
+                current_record.append(Zitem[2])  # append the gene name              
+    All_items_record.append(current_record)
+print(All_items_record)
+
+All_items_record looks like: [ [Human Gene ID, Human Protein ID, Human Gene Name, Zebrafish Gene ID, Zebrafish Protein ID, Zebrafish Gene Name], [Human Gene ID, Human Protein ID, Human Gene Name, Zebrafish Gene ID, Zebrafish Protein ID, Zebrafish Gene Name], [Human Gene ID, Human Protein ID, Human Gene Name, Zebrafish Gene ID, Zebrafish Protein ID, Zebrafish Gene Name], ...]
+
+****** BLOCK 5: Write to the tsv file ******
+with open("Human_Zebrafish_RBH.tsv", "wt") as RBH_tsv:   
+    for i in All_items_record:
+        print(i[0], "\t", i[1],"\t",i[2], "\t", i[3], "\t", i[4], "\t", i[5],  file = RBH_tsv)
+
